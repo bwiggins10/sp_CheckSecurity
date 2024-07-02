@@ -2,11 +2,10 @@ IF OBJECT_ID('dbo.sp_CheckSecurity') IS NULL
   EXEC ('CREATE PROCEDURE dbo.sp_CheckSecurity AS RETURN 0;');
 GO
 
-
 ALTER PROCEDURE dbo.sp_CheckSecurity
-    @ShowHighOnly BIT = 0
+	@ShowHighOnly BIT = 0
 	, @CheckLocalAdmin BIT = 0
-    , @PreferredDBOwner NVARCHAR(255) = NULL
+	, @PreferredDBOwner NVARCHAR(255) = NULL
 	, @Help BIT = 0
 
 WITH RECOMPILE
@@ -18,34 +17,9 @@ DECLARE
 	, @VersionDate DATETIME = NULL
 
 SELECT
-    @Version = '1.1'
-    , @VersionDate = '20240530';
+    @Version = '1.2'
+    , @VersionDate = '20240702';
 
-/*
-Changes in version 1.1 include:
-    Added notation of version and version date
-    Added check for Ad Hoc Distributed Queries
-    Added check for Database Mail XPs
-    Added check for Ole Automation Procedures
-    Added check for number of error log files
-    Added of @PreferredDBOwner parameter
-    Added default for @PreferredDBOwner is "sa" (or whatever it was renamed to) if @PreferredDBOwner is NULL
-    Updated "database owner not sa" check to "database owner not preferred owner"
-    Added of check for IP address
-    Added of check for Database Mail XPs
-    Updated vulnerability level for securityadmin members
-    Updated TRUSTWORTHY database check into two checks based on owner permission level
-    Updated vulnerability level of role members in master databases
-    Updated check for recent for product level including recent vulnerability updates (GDRs)
-    Removed requirement to create sp_CheckSecurity in the master database
-    Corrected some typos here and there
-*/
-
-
-
-SET NOCOUNT ON;
-
-/* @Help = 1 */
 IF @Help = 1 BEGIN
 	PRINT '
 /*
@@ -66,18 +40,11 @@ IF @Help = 1 BEGIN
     SQL Server that old.
     - sp_CheckSecurity is designed only for database administrators, so the user
     must be a member of the sysadmin role to complete the checks.
-    - If a database name has a question mark in it, then certain checks will fail
-    due to the usage of sp_MSforeachdb.
     
     Parameters:
-    @ShowHighOnly        1=Only high vulnerability items will be shown
-                     0=All discovered vulnerabilities(DEFAULT)
-    @CheckLocalAdmin 1=Check members of local Administrators
-                     0=Do NOT check members of local Administrators(DEFAULT)
-    @PreferredDBOwner (This can be whatever login you prefer to have as the owner
-                       of your databases. By default, it will be the sa login
-                       or whatever that login was renamed.)
-    
+    @ShowHighOnly 0=All discovered vulnerabilities(DEFAULT) | 1=Only high vulnerability items will be shown
+    @CheckLocalAdmin 0=Do NOT check members of local Administrators(DEFAULT) | 1=Check members of local Administrators
+    @PreferredDBOwner (This can be whatever login you prefer to have as the owner of your databases. By default, it will be the sa login or whatever that login was renamed.)
 
     *** WARNING FOR @CheckLocalAdmin usage ***
 
@@ -98,7 +65,6 @@ IF @Help = 1 BEGIN
     Please don''t say we didn''t warn you.
 
     *** End of WARNING FOR @CheckLocalAdmin usage ***
-
 
     MIT License
     	
@@ -160,9 +126,9 @@ DECLARE
 	, @SQLVersionMajor DECIMAL(10,2)
 	, @SQLVersionMinor DECIMAL(10,2)
 	, @ComputerNamePhysicalNetBIOS NVARCHAR(128)
-	, @ServerZeroName SYSNAME
 	, @InstanceName NVARCHAR(128)
-	, @Edition NVARCHAR(128);
+	, @Edition NVARCHAR(128)
+	, @DatabaseName NVARCHAR(128);
 
 IF OBJECT_ID('tempdb..#Results') IS NOT NULL
 	DROP TABLE #Results;
@@ -170,7 +136,7 @@ IF OBJECT_ID('tempdb..#Results') IS NOT NULL
 CREATE TABLE #Results (
 	VulnerabilityLevel TINYINT
 	, Vulnerability VARCHAR(50)
-	, Issue VARCHAR(50)
+	, Issue VARCHAR(100)
 	, DatabaseName NVARCHAR(255)
 	, Details NVARCHAR(4000)
 	, ActionStep NVARCHAR(1000)
@@ -196,14 +162,14 @@ VALUES
 	, ('2019', 15)
 	, ('2022', 16);
 
-/* SQL Server version */
+/* SQL Server Version */
 SELECT @SQLVersion = CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128));
 
 SELECT 
 	@SQLVersionMajor = SUBSTRING(@SQLVersion, 1,CHARINDEX('.', @SQLVersion) + 1 )
 	, @SQLVersionMinor = PARSENAME(CONVERT(varchar(32), @SQLVersion), 2);
 
-/* check for unsupported version */	
+/* Check for Unsupported Version */	
 IF @SQLVersionMajor < 10.5 BEGIN
 	PRINT '
 /*
@@ -226,12 +192,7 @@ SELECT
 	, @Edition = CAST(SERVERPROPERTY('Edition') AS NVARCHAR(128));
 
 
-SELECT @ServerZeroName = [name]
-FROM sys.servers
-WHERE server_id = 0
-
-
-/* name and version check */
+/* Name and Version Check */
 INSERT #Results
 SELECT 
 	0
@@ -241,15 +202,14 @@ SELECT
 	, COALESCE(@ComputerNamePhysicalNetBIOS,'')
 	+ '\' + COALESCE(@InstanceName, '(default instance)')
 	+ ', SQL Server ' + VersionName +  ' ' + @Edition
-	, '(Information captured on ' + CONVERT(VARCHAR(100), GETDATE(), 101) + ' using version ' + @Version + ')'
+	, '(Information captured on ' + CONVERT(VARCHAR(100), GETDATE(), 101) + ')'
 	, ''
 FROM #SQLVersions
 WHERE VersionNumber = @SQLVersionMajor;
 
-
-/* IP address */
+/* IP Address */
 INSERT #Results
-SELECT 
+SELECT
 	0
 	, 'Information only'
 	, 'SQL Server IP address'
@@ -259,7 +219,7 @@ SELECT
 	, 'https://straightpathsql.com/cs/ip-address'
 
 
-/* remote admin connections */
+/* Remote Admin Connections */
 INSERT #Results
 SELECT 
 	0
@@ -279,25 +239,23 @@ WHERE [name] = 'remote admin connections'
 
 /* Database Mail XPs */
 INSERT #Results
-SELECT 
+SELECT
 	0
 	, 'Information only'
 	, 'Database Mail XPs'
 	, NULL
-	, 'Database Mail XPs are currently ' 
+	, 'Database Mail XPs are currently '
 	+  CASE value_in_use
-		WHEN 1 THEN 'ENABLED.'
-		ELSE 'DISABLED.'
-		END
+			WHEN 1 THEN 'ENABLED.'
+			ELSE 'DISABLED.'
+			END
 	, 'Enabling Database Mail XPs can be useful, but be aware if your instance is breached they could be used to initiate a Denial Of Service attack.'
 	, 'https://straightpathsql.com/cs/database-mail-xps'
 FROM sys.configurations
 WHERE [name] = 'Database Mail XPs'
 
 
-
-
-/* check for supported versions */
+/* Check for supported versions */
 IF SERVERPROPERTY('EngineEdition') <> 8 /* Azure Managed Instances */ BEGIN
 	IF @SQLVersionMajor < 12
 	INSERT #Results
@@ -314,7 +272,7 @@ IF SERVERPROPERTY('EngineEdition') <> 8 /* Azure Managed Instances */ BEGIN
 	END
 
 	
-/* check for security update */
+/* Check for security updates */
 IF SERVERPROPERTY('EngineEdition') <> 8 /* Azure Managed Instances */ BEGIN
 	IF (@SQLVersionMajor = 10 AND @SQLVersionMinor < 6814) OR
 		(@SQLVersionMajor = 10.5 AND @SQLVersionMinor < 6785) OR
@@ -323,7 +281,7 @@ IF SERVERPROPERTY('EngineEdition') <> 8 /* Azure Managed Instances */ BEGIN
 		(@SQLVersionMajor = 13 AND @SQLVersionMinor < 6435) OR
 		(@SQLVersionMajor = 14 AND @SQLVersionMinor < 3465) OR
 		(@SQLVersionMajor = 15 AND @SQLVersionMinor < 4360) OR
-		(@SQLVersionMajor = 16 AND @SQLVersionMinor < 4120) 
+		(@SQLVersionMajor = 16 AND @SQLVersionMinor < 4120)
 	INSERT #Results
 	SELECT 
 		1
@@ -338,7 +296,7 @@ IF SERVERPROPERTY('EngineEdition') <> 8 /* Azure Managed Instances */ BEGIN
 	END
 
 
-/* check for encrypted databases */
+/* Check for encrypted databases */
 INSERT #Results
 SELECT
 	0
@@ -355,7 +313,7 @@ GROUP BY
 	, key_length;
 
 
-/* check for unencrypted databases */
+/* Check for unencrypted databases */
 INSERT #Results
 SELECT
 	0
@@ -387,7 +345,7 @@ WHERE sid = 0x01
 AND is_disabled = 0
 
 
-/* local Administrators group members */
+/* Local Administrators group members */
 DECLARE @LocalAdmin TABLE (
 	AccountName VARCHAR(1000)
 	, AccountType VARCHAR(8)
@@ -473,7 +431,7 @@ WHERE pri.[principal_id] IN (
     AND pri.[name] NOT LIKE '##%##';
 
 
-/* check for invalid Windows logins */
+/* Check for invalid Windows logins */
 IF(OBJECT_ID('tempdb..#InvalidLogins') IS NOT NULL)
 	BEGIN
 		
@@ -502,7 +460,7 @@ FROM #InvalidLogins
 ;
 
 
-/* blank passwords */
+/* Blank passwords */
 INSERT #Results
 SELECT --name,type_desc,create_date,modify_date,password_hash
 	1
@@ -516,12 +474,12 @@ FROM sys.sql_logins
 WHERE PWDCOMPARE('',password_hash)=1;
 
 
-/* password same as login */
+/* Password same as login */
 INSERT #Results
 SELECT --name,type_desc,create_date,modify_date,password_hash
 	1
 	, 'High - action required'
-	,'Password is same as login'
+	, 'Password is the same as login name'
 	, NULL
 	, 'Login [' + name + '] has a password that is the same as the login.'
 	, 'Change the password to something more secure. Logins with matching passwords are easy to hack.'
@@ -530,7 +488,7 @@ FROM sys.sql_logins
 WHERE PWDCOMPARE(name,password_hash)=1;
 
 
-/* passwords is password */
+/* Password is password */
 INSERT #Results
 SELECT --name,type_desc,create_date,modify_date,password_hash
 	1
@@ -544,11 +502,10 @@ FROM sys.sql_logins
 WHERE PWDCOMPARE('password',password_hash)=1;
 
 
-
 /***** Instance settings *****/
 
 
-/* CLR enabled */
+/* CLR Enabled */
 INSERT #Results
 SELECT  
 	2
@@ -566,7 +523,7 @@ WHERE [name] = 'clr enabled'
 AND value_in_use = 1;
 
 
-/* xp_cmdshell enabled */
+/* xp_cmdshell Enabled */
 INSERT #Results
 SELECT  
 	3
@@ -581,7 +538,7 @@ WHERE [name] = 'xp_cmdshell'
 AND value_in_use = 1;
 
 
-/* Ole Automation Procedures enabled */
+/* Ole Automation Procedures Enabled */
 INSERT #Results
 SELECT  
 	3
@@ -596,7 +553,7 @@ WHERE [name] = 'Ole Automation Procedures'
 AND value_in_use = 1;
 
 
-/* cross-database ownership chaining */
+/* Cross-Database Ownership Chaining */
 INSERT #Results
 SELECT  
 	2
@@ -719,63 +676,232 @@ INNER JOIN sys.dm_database_encryption_keys d
 	ON c.thumbprint = d.encryptor_thumbprint;
 
 
+/* check TDE key algorithm and key length */
+INSERT #Results
+SELECT
+	3
+	, 'Potential - review recommended'
+	, 'TDE uses legacy encryption algorithm'
+	, d.name
+	, 'The TDE encryption for database ' + d.name + ' uses the encryption algorithm ' + dek.key_algorithm + ' with a key length of ' + CAST(dek.key_length AS CHAR(4))
+	, 'The database encryption key should be regenerated to use the more secure AES_256 algorithm.'
+	, 'https://learn.microsoft.com/en-us/sql/relational-databases/security/encryption/choose-an-encryption-algorithm?view=sql-server-ver16'
+FROM sys.dm_database_encryption_keys dek
+	RIGHT JOIN master.sys.databases d ON d.database_id = dek.database_id
+WHERE dek.key_algorithm <> 'AES' or dek.key_length <> '256'
+
+
+/* check Symmetric Key encryption algorithm */
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0 AND database_id <> 2
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SQL = N'
+    USE [' + @DatabaseName + '];
+    
+	INSERT INTO #Results
+	SELECT DISTINCT
+		3
+		, ''Potential - review recommended''
+		, ''Symmetric Key uses legacy encryption algorithm''
+		, DB_NAME()
+		, ''The Symmetric Key ['' + name + ''] used for encryption in '' + DB_NAME() + '' uses the encryption algorithm '' + algorithm_desc COLLATE DATABASE_DEFAULT + ''.''
+		, ''The Symmetric Key should be recreated to use the more secure AES_256 algorithm (Note that this requires migrating encrypted data from the old key to a new one, the encryption algorithm of an existing key is not modifiable).''
+		, ''https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-symmetric-key-transact-sql?view=sql-server-ver16''
+    FROM sys.symmetric_keys
+	WHERE algorithm_desc <> ''AES_256'' 
+		AND symmetric_key_id NOT IN (101, 102);
+	';
+    EXEC sp_executesql @SQL;
+
+    FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
+
+
+/* check DMK encryption algorithm */
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0 AND database_id <> 2
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SQL = N'
+    USE [' + @DatabaseName + '];
+    
+        INSERT INTO #Results
+        SELECT DISTINCT
+                3
+                , ''Potential - review recommended''
+                , ''Database Master Key uses legacy encryption algorithm.''
+                , DB_NAME()
+                , ''The Database Master Key ['' + name + ''] used for encryption in '' + DB_NAME() + '' uses the encryption algorithm '' + algorithm_desc COLLATE DATABASE_DEFAULT + ''.''
+                , ''The Database Master Key should be regenerated to use the more secure AES_256 algorithm.''
+                , ''https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-master-key-transact-sql?view=sql-server-ver16''
+    FROM sys.symmetric_keys
+        WHERE algorithm_desc <> ''AES_256''
+                AND symmetric_key_id = 101;
+        ';
+    EXEC sp_executesql @SQL;
+    FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
+
+
 /* check for database backup certificate backup */
 IF @SQLVersionMajor >= 12 BEGIN
-	SET @SQL = '
-	SELECT DISTINCT
-		1
-		, ''High - action required''
-		, ''Database backup certificate never been backed up.''
-		, b.[database_name]
-		, ''The certificate '' + c.name + '' used to encrypt database backups for '' + b.[database_name] + '' has never been backed up.''
-		, ''Make sure you have a recent backup of your certificate in a secure location in case you need to restore encrypted database backups.''
-		, ''https://straightpathsql.com/cs/database-backup-certificate-no-backup''
-	FROM sys.certificates c 
-	INNER JOIN msdb.dbo.backupset b
-		ON c.thumbprint = b.encryptor_thumbprint
-	WHERE c.pvt_key_last_backup_date IS NULL';
 
-	INSERT #Results
-	EXEC sp_MSforeachdb @SQL
+	DECLARE db_cursor CURSOR FOR
+	SELECT name 
+	FROM master.sys.databases
+	WHERE state = 0
+	AND [name] NOT IN (
+		SELECT adc.database_name
+		FROM sys.availability_replicas AS ar
+	   		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+		WHERE ar.secondary_role_allow_connections = 0
+	   		AND ar.replica_server_name = @@SERVERNAME
+			AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+	
+	OPEN db_cursor;
+	FETCH NEXT FROM db_cursor INTO @DatabaseName;
 
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		SET @SQL = N'
+		USE [' + @DatabaseName + '];
+		
+		INSERT INTO #Results
+		SELECT DISTINCT
+			1
+			, ''High - action required''
+			, ''Database backup certificate never been backed up.''
+			, b.[database_name]
+			, ''The certificate '' + c.name + '' used to encrypt database backups for '' + b.[database_name] COLLATE DATABASE_DEFAULT + '' has never been backed up.''
+			, ''Make sure you have a recent backup of your certificate in a secure location in case you need to restore encrypted database backups.''
+			, ''https://straightpathsql.com/cs/database-backup-certificate-no-backup''
+		FROM sys.certificates c 
+		INNER JOIN msdb.dbo.backupset b
+			ON c.thumbprint = b.encryptor_thumbprint
+		WHERE c.pvt_key_last_backup_date IS NULL;';
+		EXEC sp_executesql @SQL;
+		
+		FETCH NEXT FROM db_cursor INTO @DatabaseName 
+	END
 
-	SET @SQL = '
-	SELECT DISTINCT
-		1
-		, ''High - action required''
-		, ''Database backup certificate not backed up recently.''
-		, b.[database_name]
-		, ''The certificate '' + c.name + '' used to encrypt database backups for '' + b.[database_name] + '' has not been backed up since: '' + CAST(c.pvt_key_last_backup_date AS VARCHAR(100))
-		, ''Make sure you have a recent backup of your certificate in a secure location in case you need to restore encrypted database backups.''
-		, ''https://straightpathsql.com/cs/database-backup-certificate-no-backup''
-	FROM sys.certificates c 
-	INNER JOIN msdb.dbo.backupset b
-		ON c.thumbprint = b.encryptor_thumbprint
-	WHERE c.pvt_key_last_backup_date <= DATEADD(dd, -90, GETDATE());';
+	CLOSE db_cursor;
+	DEALLOCATE db_cursor;
 
-	INSERT #Results
-	EXEC sp_MSforeachdb @SQL
+	DECLARE db_cursor CURSOR FOR
+	SELECT name 
+	FROM master.sys.databases
+	WHERE state = 0
+	AND [name] NOT IN (
+		SELECT adc.database_name
+		FROM sys.availability_replicas AS ar
+	   		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+		WHERE ar.secondary_role_allow_connections = 0
+	   		AND ar.replica_server_name = @@SERVERNAME
+			AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+	
+	OPEN db_cursor;
+	FETCH NEXT FROM db_cursor INTO @DatabaseName;
+
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		SET @SQL = N'
+		USE [' + @DatabaseName + '];
+		
+		INSERT INTO #Results
+		SELECT DISTINCT
+			1
+			, ''High - action required''
+			, ''Database backup certificate not backed up recently.''
+			, b.[database_name]
+			, ''The certificate '' + c.name + '' used to encrypt database backups for '' + b.[database_name] COLLATE DATABASE_DEFAULT + '' has not been backed up since: '' + CAST(c.pvt_key_last_backup_date AS VARCHAR(100))
+			, ''Make sure you have a recent backup of your certificate in a secure location in case you need to restore encrypted database backups.''
+			, ''https://straightpathsql.com/cs/database-backup-certificate-no-backup''
+		FROM sys.certificates c 
+		INNER JOIN msdb.dbo.backupset b
+			ON c.thumbprint = b.encryptor_thumbprint
+		WHERE c.pvt_key_last_backup_date <= DATEADD(dd, -90, GETDATE());';
+		EXEC sp_executesql @SQL;
+		
+		FETCH NEXT FROM db_cursor INTO @DatabaseName 
+	END
+	
+	CLOSE db_cursor;
+	DEALLOCATE db_cursor;
 
 
 /* check for database backup certificate expiration dates */
-	SET @SQL = '
-	SELECT DISTINCT
-		1
-		, ''High - action required''
-		, ''Database backup certificate set to expire.''
-		, b.[database_name]
-		, ''The certificate '' + c.name + '' used to encrypt database '' + b.[database_name] + '' is set to expire on: '' + CAST(c.expiry_date AS VARCHAR(100))
-		, ''You will not be able to backup or restore your encrypted database backups with an expired certificate, so these should be changed regularly like passwords.''
-		, ''https://straightpathsql.com/cs/database-backup-expire''
-	FROM sys.certificates c 
-	INNER JOIN msdb.dbo.backupset b
-		ON c.thumbprint = b.encryptor_thumbprint';
+	DECLARE db_cursor CURSOR FOR
+	SELECT name 
+	FROM master.sys.databases
+	WHERE state = 0
+	AND [name] NOT IN (
+		SELECT adc.database_name
+		FROM sys.availability_replicas AS ar
+	   		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+		WHERE ar.secondary_role_allow_connections = 0
+	   		AND ar.replica_server_name = @@SERVERNAME
+			AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+	
+	OPEN db_cursor;
+	FETCH NEXT FROM db_cursor INTO @DatabaseName;
 
-	INSERT #Results
-	EXEC sp_MSforeachdb @SQL
-
-
+	WHILE @@FETCH_STATUS = 0
+	BEGIN	
+		SET @SQL = N'
+		USE [' + @DatabaseName + '];
+		
+		INSERT INTO #Results
+		SELECT DISTINCT
+			1
+			, ''High - action required''
+			, ''Database backup certificate set to expire.''
+			, b.[database_name]
+			, ''The certificate '' + c.name + '' used to encrypt database '' + b.[database_name] COLLATE DATABASE_DEFAULT + '' is set to expire on: '' + CAST(c.expiry_date AS VARCHAR(100))
+			, ''You will not be able to backup or restore your encrypted database backups with an expired certificate, so these should be changed regularly like passwords.''
+			, ''https://straightpathsql.com/cs/database-backup-expire''
+		FROM sys.certificates c 
+		INNER JOIN msdb.dbo.backupset b
+			ON c.thumbprint = b.encryptor_thumbprint';
+		EXEC sp_executesql @SQL;
+		
+		FETCH NEXT FROM db_cursor INTO @DatabaseName 
 	END
+	
+	CLOSE db_cursor;
+	DEALLOCATE db_cursor;
+END
+
 
 /* linked server check */
 INSERT #Results
@@ -869,7 +995,7 @@ SELECT
 	, 'The database ' + [name]
 		+ ' is owned by ' + SUSER_SNAME(owner_sid) 
 	, 'Verify this is the correct owner, because if this login is disabled or not available due to Active Directory problems then database accessability could be affected.'
-    , 'https://straightpathsql.com/cs/database-owner-is-not-preferred-owner'
+    , 'https://straightpathsql.com/cs/database-owner-not-sa'
 FROM sys.databases
 WHERE (((SUSER_SNAME(owner_sid) <> SUSER_SNAME(0x01)) AND (name IN (N'master', N'model', N'msdb', N'tempdb')))
 OR ((SUSER_SNAME(owner_sid) <> @PreferredDBOwner) AND (name NOT IN (N'master', N'model', N'msdb', N'tempdb'))))
@@ -888,7 +1014,6 @@ SELECT
     , 'https://straightpathsql.com/cs/database-owner-blank'
 FROM sys.databases
 WHERE SUSER_SNAME(owner_sid) is NULL
-
 
 
 /* SQL Server service account */
@@ -910,7 +1035,7 @@ INSERT #Results
 SELECT
 	0
 	, 'Information only'
-	, 'Service Account for SQL Agent'
+	, 'Service account for SQL Agent'
 	, NULL
 	, 'The SQL Agent service is running with the account: ' + service_account
 	, 'We recommend using managed service accounts if possible to reduce vulnerabilty.'
@@ -931,8 +1056,6 @@ SELECT
 		ELSE '.' END
 	, 'If using the TCP protocol, port 1433 is the default.'
 	, ''
-
-
 /* Check that SQL Login Audit includes failed logins */
 DECLARE @AuditValue int
 
@@ -999,10 +1122,7 @@ IF (SELECT ISNULL(@NumErrorLogs, 12)) < 12
 		, 'This instance is configured for only ' + CONVERT(VARCHAR(10), (ISNULL(@NumErrorLogs, -1))) + ' SQL Server error log files.'
 		, 'We recommend having between 12 and 52 SQL Server error log files to review for patterns of login failures or suspect IP addresses which may indicate hacking attempts.'
 	    , 'https://straightpathsql.com/cs/number-of-sql-server-error-log-files'
-
-
-/* default trace disabled */
-
+		
 
 /***** Database settings *****/
 
@@ -1038,17 +1158,43 @@ WHERE database_id > 4
 
 
 /* db_owner role member */
-SET @SQL = 'USE [?]; 
-SELECT 3, ''Potential - review recommended'' 
-, ''db_owner role member''
-, DB_NAME()
-, (''In ['' + DB_NAME() + ''], user ['' + u.name + '']  has the role ['' + g.name + ''].  This user can perform any function in this database including changing permissions for other users.'')
-, ''Verify these elevated database permissions are required for this user.''
-, ''https://straightpathsql.com/cs/db-owner''
-FROM (SELECT memberuid = convert(int, member_principal_id), groupuid = convert(int, role_principal_id) FROM [?].sys.database_role_members) m inner join [?].dbo.sysusers u on m.memberuid = u.uid inner join sysusers g on m.groupuid = g.uid where u.name <> ''dbo'' and g.name in (''db_owner'') OPTION (RECOMPILE);';
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
 
-INSERT #Results
-EXEC sp_MSforeachdb @SQL
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SET @SQL = N'
+	USE [' + @DatabaseName + '];
+	
+	INSERT INTO #Results
+	SELECT 
+		3
+		, ''Potential - review recommended'' 
+		, ''db_owner role member''
+		, DB_NAME()
+		, (''In ['' + DB_NAME() + ''], user ['' + u.name + '']  has the role ['' + g.name + ''].  This user can perform any function in this database including changing permissions for other users.'')
+		, ''Verify these elevated database permissions are required for this user.''
+		, ''https://straightpathsql.com/cs/db-owner''
+		FROM (SELECT memberuid = CONVERT(int, member_principal_id), groupuid = CONVERT(int, role_principal_id) FROM [' + @DatabaseName + '].sys.database_role_members) m INNER JOIN [' + @DatabaseName + '].dbo.sysusers u ON m.memberuid = u.uid INNER JOIN sysusers g ON m.groupuid = g.uid WHERE u.name <> ''dbo'' AND g.name IN (''db_owner'') OPTION (RECOMPILE);';
+	EXEC sp_executesql @SQL;
+	
+	FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
 
 UPDATE #Results
 SET
@@ -1060,184 +1206,265 @@ AND DatabaseName IN ('master','msdb')
 
 
 /* unusual database permissions */
-SET @SQL = 'USE [?]; 
-SELECT 3, ''Potential - review recommended'' 
-, ''Unusual database permissions''
-, DB_NAME()
-, (''In ['' + DB_NAME() + ''], user ['' + u.name + '']  has the role ['' + g.name + ''].  This is an unusual database role with elevated permissions, but it is redundant if this user is also in the db_owner role.'')
-, ''Verify these elevated database permissions are required for this user.''
-, ''https://straightpathsql.com/cs/unusual-database-permissions''
-FROM (SELECT memberuid = convert(int, member_principal_id), groupuid = convert(int, role_principal_id) FROM [?].sys.database_role_members) m inner join [?].dbo.sysusers u on m.memberuid = u.uid inner join sysusers g on m.groupuid = g.uid where u.name <> ''dbo'' and g.name in (''db_accessadmin'' , ''db_securityadmin'' , ''db_ddladmin'') OPTION (RECOMPILE);';
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
 
-INSERT #Results
-EXEC sp_MSforeachdb @SQL
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
 
-UPDATE #Results
-SET
-    VulnerabilityLevel = 1
-	, Vulnerability = 'High - action required'
-	, Issue = 'Unusual database permissions - system databases'
-WHERE Issue = 'Unusual database permissions'
-AND DatabaseName IN ('master','msdb')
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SET @SQL = N'
+	USE [' + @DatabaseName + '];
+	
+	INSERT INTO #Results
+	SELECT 
+		3
+		, ''Potential - review recommended'' 
+		, ''Unusual database permissions''
+		, 	DB_NAME()
+		, (''In ['' + DB_NAME() + ''], user ['' + u.name + '']  has the role ['' + g.name + ''].  This is an unusual database role with elevated permissions, but it is redundant if this user is also in the db_owner role.'')
+		, ''Verify these elevated database permissions are required for this user.''
+		, ''https://straightpathsql.com/cs/unusual-database-permissions''
+		FROM (SELECT memberuid = CONVERT(int, member_principal_id), groupuid = CONVERT(int, role_principal_id) FROM [' + @DatabaseName + '].sys.database_role_members) m INNER JOIN [' + @DatabaseName + '].dbo.sysusers u ON m.memberuid = u.uid INNER JOIN sysusers g ON m.groupuid = g.uid WHERE u.name <> ''dbo'' AND g.name IN (''db_accessadmin'' , ''db_securityadmin'' , ''db_ddladmin'') OPTION (RECOMPILE);';
+    EXEC sp_executesql @SQL;
+
+    FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
 
 
 /* find roles within roles in each database */
-SET @SQL = '
-USE [?]
-IF DB_Name() NOT IN (''tempdb'') BEGIN
-SELECT 3, ''Potential - review recommended'' 
-, ''Roles within roles''
-, db_name() as [DatabaseName]
-, ''The role ['' + user_name(roles.member_principal_id) + ''] is a member of the role ['' + user_name(roles.role_principal_id)
- + '']. Including roles in other roles can lead to unintended privilege escalation.''
-, ''Remove ['' + user_name(roles.member_principal_id) + ''] from the role ['' + user_name(roles.role_principal_id) + ''] and explicitly assign it required permissions''
-, ''https://straightpathsql.com/cs/database-roles-within-roles''
-FROM sys.database_role_members AS roles, sys.database_principals users
-WHERE roles.member_principal_id = users.principal_id
-AND user_name(roles.member_principal_id) <> ''RSExecRole''
-AND ( roles.role_principal_id >= 16384 AND roles.role_principal_id <= 16393)
-AND users.type = ''R''
-END'
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0 AND database_id <> 2
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
 
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
 
-INSERT #Results
-EXEC sp_MSforeachdb @SQL
+WHILE @@FETCH_STATUS = 0
+BEGIN
+SET @SQL = N'
+	USE [' + @DatabaseName + '];
+	
+	INSERT INTO #Results
+	SELECT 
+		3
+		, ''Potential - review recommended'' 
+		, ''Roles within roles''
+		, 	DB_NAME()
+		, ''The role ['' + user_name(roles.member_principal_id) + ''] is a member of the role ['' + user_name(roles.role_principal_id) + '']. Including roles in other roles can lead to unintended privilege escalation.''
+		, ''Remove ['' + user_name(roles.member_principal_id) + ''] from the role ['' + user_name(roles.role_principal_id) + ''] and explicitly assign it required permissions''
+		, ''https://straightpathsql.com/cs/database-roles-within-roles''
+	FROM sys.database_role_members AS roles, sys.database_principals users
+	WHERE roles.member_principal_id = users.principal_id
+		AND user_name(roles.member_principal_id) <> ''RSExecRole''
+		AND ( roles.role_principal_id >= 16384 AND roles.role_principal_id <= 16393)
+		AND users.type = ''R'';'
+    EXEC sp_executesql @SQL;
+
+    FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
 
 
 /* find orphan user in each database */
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0 AND database_id <> 2
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+SET @SQL = N'
+	USE [' + @DatabaseName + '];
+
+	INSERT INTO #Results
+	SELECT 
+		4
+		, ''Low - action recommended'' 
+		, ''Orphaned user''
+		, 	DB_NAME()
+		, ''The database user ['' + [NAME] + ''] is orphaned, meaning it has no corresponding login at the instance level.''
+		, ''Reconnect the user to an existing login using sp_change_users_login, or drop the user.''
+		, ''https://straightpathsql.com/cs/orphaned-users''
+	FROM sys.database_principals
+	WHERE sid NOT IN (SELECT sid FROM sys.server_principals)
+		AND type = ''S''
+		AND principal_id != 2
+		AND DATALENGTH(sid) <= 28'
+		+ CASE 
+			WHEN @SQLVersionMajor >= 12 THEN ' AND authentication_type_desc = ''INSTANCE'''
+			END
+		+ ';'
+    EXEC sp_executesql @SQL;
+
+    FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
+
+
+/* database owner is different from owner in master */
+DECLARE db_cursor CURSOR FOR
+SELECT name 
+FROM master.sys.databases
+WHERE state = 0 AND database_id <> 2
+AND [name] NOT IN (
+	SELECT adc.database_name
+	FROM sys.availability_replicas AS ar
+		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+	WHERE ar.secondary_role_allow_connections = 0
+		AND ar.replica_server_name = @@SERVERNAME
+		AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @DatabaseName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
 SET @SQL = '
-USE [?]
-IF DB_Name() NOT IN (''tempdb'') BEGIN
-SELECT 4, ''Low - action recommended'' 
-, ''Orphaned user''
-, db_name() as [DatabaseName]
-, ''The database user ['' + [NAME] + ''] is orphaned, meaning it has no corresponding login at the instance level.''
-, ''Reconnect the user to an existing login using sp_change_users_login, or drop the user.''
-, ''https://straightpathsql.com/cs/orphaned-users''
-FROM sys.database_principals
-WHERE sid NOT IN (SELECT sid FROM sys.server_principals)
-AND type = ''S''
-AND principal_id != 2
-AND DATALENGTH(sid) <= 28'
-+ CASE 
-	WHEN @SQLVersionMajor >= 12 THEN ' AND authentication_type_desc = ''INSTANCE'''
-	END
-+ ' END'
+	USE [' + @DatabaseName + '];
 
+	INSERT INTO #Results
+	SELECT 
+		4
+		, ''Low - action recommended'' 
+		, ''Database owner discrepancy''
+		, DB_NAME()
+		, ''The database owner ['' + dbprs.name COLLATE DATABASE_DEFAULT + ''] is different than the owner listed in master ['' + ssp.name COLLATE DATABASE_DEFAULT + ''].''
+		, ''Use sp_changedbowner to set the database owner to the correct login.''
+		, ''https://straightpathsql.com/cs/database-owner-discrepancy''
+	FROM   sys.database_principals AS dbprs
+	INNER JOIN sys.databases AS dbs ON dbprs.sid != dbs.owner_sid 
+	JOIN sys.server_principals ssp ON dbs.owner_sid = ssp.sid 
+	WHERE dbs.database_id = DB_ID()
+		AND dbprs.principal_id = 1;'
+    EXEC sp_executesql @SQL;
 
+    FETCH NEXT FROM db_cursor INTO @DatabaseName;
+END
 
-INSERT #Results
-EXEC sp_MSforeachdb @SQL
-
-
-/* database owner is different from owner in master */ -- has issues with mistmatched collation
-SET @SQL = '
-USE [?]
-IF DB_Name() NOT IN (''tempdb'') BEGIN
-SELECT 4, ''Low - action recommended'' 
-, ''Database owner discrepancy''
-, db_name() as [DatabaseName]
-, ''The database owner ['' + dbprs.name COLLATE SQL_Latin1_General_CP1_CI_AS + ''] is different than the owner listed in master ['' + ssp.name COLLATE SQL_Latin1_General_CP1_CI_AS + ''].''
-, ''Use sp_changedbowner to set the database owner to the correct login.''
-, ''https://straightpathsql.com/cs/database-owner-discrepancy''
-FROM   sys.database_principals AS dbprs
-INNER JOIN sys.databases AS dbs
- ON dbprs.sid != dbs.owner_sid 
-JOIN sys.server_principals ssp
- ON dbs.owner_sid = ssp.sid 
-WHERE dbs.database_id = Db_id()
-AND dbprs.principal_id = 1
-END'
-
-INSERT #Results
-EXEC sp_MSforeachdb @SQL
-
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
 
 
 /* explicit permissions granted to the Public role */
 IF @SQLVersionMajor >= 12 BEGIN
-	DECLARE @DB_Name VARCHAR(256) 
 
-	DECLARE public_cursor CURSOR FOR
-		SELECT name 
-		FROM master.sys.databases
-		WHERE database_id > 4 AND state = 0
-		AND [name] not in (
-			SELECT adc.database_name
-			FROM sys.availability_replicas AS ar
-		   JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
-			WHERE ar.secondary_role_allow_connections = 0
-		   AND ar.replica_server_name = @@SERVERNAME
-		   AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0 
-			)
+	DECLARE db_cursor CURSOR FOR
+	SELECT name 
+	FROM master.sys.databases
+	WHERE state = 0 AND database_id <> 2
+	AND [name] NOT IN (
+		SELECT adc.database_name
+		FROM sys.availability_replicas AS ar
+	   		JOIN sys.availability_databases_cluster adc ON adc.group_id = ar.group_id
+		WHERE ar.secondary_role_allow_connections = 0
+	   		AND ar.replica_server_name = @@SERVERNAME
+			AND sys.fn_hadr_is_primary_replica(adc.database_name) = 0);
 
-	OPEN public_cursor 
-	FETCH NEXT FROM public_cursor INTO @DB_Name 
+	OPEN db_cursor 
+	FETCH NEXT FROM db_cursor INTO @DatabaseName 
 
 	WHILE @@FETCH_STATUS = 0 
 	BEGIN 
-
-	SET @SQL = 'USE ' + QUOTENAME(@DB_Name) + '; ' +
-	'SELECT 2, ''High - review required''
-	, ''Public permissions''
-	, db_name() as [DatabaseName]
-	, ''The [public] role has been granted the permission ['' + per.permission_name + ''] on the object [''
-	+ CASE
-	WHEN per.class = 0 THEN db_name()
-	WHEN per.class = 3 THEN schema_name(major_id)
-	WHEN per.class = 4 THEN printarget.NAME
-	WHEN per.class = 5 THEN asm.NAME
-	WHEN per.class = 6 THEN type_name(major_id)
-	WHEN per.class = 10 THEN xmlsc.NAME
-	WHEN per.class = 15 THEN msgt.NAME COLLATE DATABASE_DEFAULT
-	WHEN per.class = 16 THEN svcc.NAME COLLATE DATABASE_DEFAULT
-	WHEN per.class = 17 THEN svcs.NAME COLLATE DATABASE_DEFAULT
-	WHEN per.class = 18 THEN rsb.NAME COLLATE DATABASE_DEFAULT
-	WHEN per.class = 19 THEN rts.NAME COLLATE DATABASE_DEFAULT
-	WHEN per.class = 23 THEN ftc.NAME
-	WHEN per.class = 24 THEN sym.NAME
-	WHEN per.class = 25 THEN crt.NAME
-	WHEN per.class = 26 THEN asym.NAME
-	END + ''].''
-	, ''Because these permissions are available to anyone who can connect to your instance, they should be revoked and granted to users, groups, or roles other than public.''
-	, ''https://straightpathsql.com/cs/explicit-permissions-for-public''
-	FROM sys.database_permissions AS per
-	LEFT JOIN sys.database_principals AS prin ON per.grantee_principal_id = prin.principal_id
-	LEFT JOIN sys.assemblies AS asm ON per.major_id = asm.assembly_id
-	LEFT JOIN sys.xml_schema_collections AS xmlsc ON per.major_id = xmlsc.xml_collection_id
-	LEFT JOIN sys.service_message_types AS msgt ON per.major_id = msgt.message_type_id
-	LEFT JOIN sys.service_contracts AS svcc ON per.major_id = svcc.service_contract_id
-	LEFT JOIN sys.services AS svcs ON per.major_id = svcs.service_id
-	LEFT JOIN sys.remote_service_bindings AS rsb ON per.major_id = rsb.remote_service_binding_id
-	LEFT JOIN sys.routes AS rts ON per.major_id = rts.route_id
-	LEFT JOIN sys.database_principals AS printarget ON per.major_id = printarget.principal_id
-	LEFT JOIN sys.symmetric_keys AS sym ON per.major_id = sym.symmetric_key_id
-	LEFT JOIN sys.asymmetric_keys AS asym ON per.major_id = asym.asymmetric_key_id
-	LEFT JOIN sys.certificates AS crt ON per.major_id = crt.certificate_id
-	LEFT JOIN sys.fulltext_catalogs AS ftc ON per.major_id = ftc.fulltext_catalog_id
-	WHERE per.grantee_principal_id = DATABASE_PRINCIPAL_ID(''public'')
-		AND class != 1 -- Object or Columns (class = 1) are handled by VA1054 and have different remediation syntax
-		AND [state] IN (''G'',''W'')
-		AND NOT (
-			per.class = 0
-			AND prin.NAME = ''public''
-			AND per.major_id = 0
-			AND per.minor_id = 0
-			AND permission_name IN (
-				''VIEW ANY COLUMN ENCRYPTION KEY DEFINITION''
-				,''VIEW ANY COLUMN MASTER KEY DEFINITION''
-				)
-			)'
+	SET @SQL = N'
+		USE [' + @DatabaseName + '];
 		
-		INSERT #Results
+		INSERT INTO #Results
+		SELECT
+			2 
+			, ''High - review required''
+			, ''Public permissions''
+			, 	DB_NAME() as [DatabaseName]
+			, ''The [public] role has been granted the permission ['' + per.permission_name + ''] on the object ['' + 
+			CASE
+				WHEN per.class = 0 THEN DB_NAME()
+				WHEN per.class = 3 THEN SCHEMA_NAME(major_id)
+				WHEN per.class = 4 THEN printarget.NAME
+				WHEN per.class = 5 THEN asm.NAME
+				WHEN per.class = 6 THEN TYPE_NAME(major_id)
+				WHEN per.class = 10 THEN xmlsc.NAME
+				WHEN per.class = 15 THEN msgt.NAME COLLATE DATABASE_DEFAULT
+				WHEN per.class = 16 THEN svcc.NAME COLLATE DATABASE_DEFAULT
+				WHEN per.class = 17 THEN svcs.NAME COLLATE DATABASE_DEFAULT
+				WHEN per.class = 18 THEN rsb.NAME COLLATE DATABASE_DEFAULT
+				WHEN per.class = 19 THEN rts.NAME COLLATE DATABASE_DEFAULT
+				WHEN per.class = 23 THEN ftc.NAME
+				WHEN per.class = 24 THEN sym.NAME
+				WHEN per.class = 25 THEN crt.NAME
+				WHEN per.class = 26 THEN asym.NAME
+			END + ''].''
+			, ''Because these permissions are available to anyone who can connect to your instance, they should be revoked and granted to users, groups, or roles other than public.''
+			, ''https://straightpathsql.com/cs/explicit-permissions-for-public''
+		FROM sys.database_permissions AS per
+			LEFT JOIN sys.database_principals AS prin ON per.grantee_principal_id = prin.principal_id
+			LEFT JOIN sys.assemblies AS asm ON per.major_id = asm.assembly_id
+			LEFT JOIN sys.xml_schema_collections AS xmlsc ON per.major_id = xmlsc.xml_collection_id
+			LEFT JOIN sys.service_message_types AS msgt ON per.major_id = msgt.message_type_id
+			LEFT JOIN sys.service_contracts AS svcc ON per.major_id = svcc.service_contract_id
+			LEFT JOIN sys.services AS svcs ON per.major_id = svcs.service_id
+			LEFT JOIN sys.remote_service_bindings AS rsb ON per.major_id = rsb.remote_service_binding_id
+			LEFT JOIN sys.routes AS rts ON per.major_id = rts.route_id
+			LEFT JOIN sys.database_principals AS printarget ON per.major_id = printarget.principal_id
+			LEFT JOIN sys.symmetric_keys AS sym ON per.major_id = sym.symmetric_key_id
+			LEFT JOIN sys.asymmetric_keys AS asym ON per.major_id = asym.asymmetric_key_id
+			LEFT JOIN sys.certificates AS crt ON per.major_id = crt.certificate_id
+			LEFT JOIN sys.fulltext_catalogs AS ftc ON per.major_id = ftc.fulltext_catalog_id
+		WHERE per.grantee_principal_id = DATABASE_PRINCIPAL_ID(''public'')
+			AND class != 1 -- Object or Columns (class = 1) are handled by VA1054 and have different remediation syntax
+			AND [state] IN (''G'',''W'')
+			AND NOT (
+				per.class = 0
+				AND prin.NAME = ''public''
+				AND per.major_id = 0
+				AND per.minor_id = 0
+				AND permission_name IN (
+					''VIEW ANY COLUMN ENCRYPTION KEY DEFINITION''
+					,''VIEW ANY COLUMN MASTER KEY DEFINITION''
+					)
+				)';
 		EXEC sp_executesql @SQL 
 
-		/* iterate the cursor to the next database name */
-		FETCH NEXT FROM public_cursor INTO @DB_Name 
-	END 
-	CLOSE public_cursor;
-	DEALLOCATE public_cursor;
-	END;
+		FETCH NEXT FROM db_cursor INTO @DatabaseName 
+	END
+			
+	CLOSE db_cursor;
+	DEALLOCATE db_cursor;
+END
 
 /* results */
 IF @ShowHighOnly = 1
